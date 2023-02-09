@@ -15,7 +15,7 @@ Most other typical preprocessor functionality can be supported via JavaScript's
 
 You can install from npm:
 
-`npm install wgls-preprocessor`
+`npm install wgsl-preprocessor`
 
 And then import into your code as a standard ES6 module:
 
