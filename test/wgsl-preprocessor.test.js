@@ -116,6 +116,26 @@ describe('wgsl tag', () => {
           No
         #endif
       #endif`.trim()).to.equal(`Yes`);
+
+      // From https://github.com/toji/wgsl-preprocessor/issues/2
+      // Thanks @typio!
+      expect(wgsl`
+      #if ${true}
+          Yes
+      #elif ${false}
+          No1
+          #if ${false}
+              No2
+          #else
+              No3
+          #endif
+          No4
+          #if ${false}
+              No5
+          #else
+              No6
+          #endif
+      #endif`.trim()).to.equal(`Yes`);
     });
 
   });

@@ -1,12 +1,55 @@
 /** WGSL Preprocessor v1.0.0 **/
 const preprocessorSymbols = /#([^\s]*)(\s*)/gm
 
+class ConditionalState {
+  elseIsValid = true;
+  branches = [];
+
+  constructor(initialExpression) {
+    this.pushBranch('if', initialExpression);
+  }
+
+  pushBranch(token, expression) {
+    if (!this.elseIsValid) {
+      throw new Error(`#${token} not preceeded by an #if or #elif`);
+    }
+    this.elseIsValid = (token === 'if' || token === 'elif');
+    this.branches.push({
+      expression: !!expression,
+      string: ''
+    });
+  }
+
+  appendStringToCurrentBranch(...strings) {
+    for (const string of strings) {
+      this.branches[this.branches.length-1].string += string;
+    }
+  }
+
+  resolve() {
+    for (const branch of this.branches) {
+      if (branch.expression) {
+        return branch.string;
+      }
+    }
+
+    return '';
+  }
+}
+
 // Template literal tag that handles simple preprocessor symbols for WGSL
 // shaders. Supports #if/elif/else/endif statements.
 export function wgsl(strings, ...values) {
   const stateStack = [];
-  let state = { string: '', elseIsValid: false, expression: true };
+  let state = new ConditionalState(true);
+  state.elseIsValid = false;
   let depth = 1;
+
+  const assertTemplateFollows = (match, string) => {
+    if (match.index + match[0].length != string.length) {
+      throw new Error(`#${match[1]} must be immediately followed by a template expression (ie: \${value})`);
+    }
+  }
 
   for (let i = 0; i < strings.length; ++i) {
     const string = strings[i];
@@ -16,58 +59,39 @@ export function wgsl(strings, ...values) {
     let valueConsumed = false;
 
     for (const match of matchedSymbols) {
-      state.string += string.substring(lastIndex, match.index);
+      state.appendStringToCurrentBranch(string.substring(lastIndex, match.index));
 
       switch (match[1]) {
         case 'if':
-          if (match.index + match[0].length != string.length) {
-            throw new Error('#if must be immediately followed by a template expression (ie: ${value})');
-          }
+          assertTemplateFollows(match, string);
+
           valueConsumed = true;
           stateStack.push(state);
-          depth++;
-          state = { string: '', elseIsValid: true, expression: !!values[i] };
+          state = new ConditionalState(values[i]);
           break;
         case 'elif':
-          if (match.index + match[0].length != string.length) {
-            throw new Error('#elif must be immediately followed by a template expression (ie: ${value})');
-            break;
-          } else if (!state.elseIsValid) {
-            throw new Error('#elif not preceeded by an #if or #elif');
-            break;
-          }
+          assertTemplateFollows(match, string);
+
           valueConsumed = true;
-          if (state.expression && stateStack.length != depth) {
-            stateStack.push(state);
-          }
-          state = { string: '', elseIsValid: true, expression: !!values[i] };
+          state.pushBranch(match[1], values[i]);
           break;
         case 'else':
-          if (!state.elseIsValid) {
-            throw new Error('#else not preceeded by an #if or #elif');
-            break;
-          }
-          if (state.expression && stateStack.length != depth) {
-            stateStack.push(state);
-          }
-          state = { string: match[2], elseIsValid: false, expression: true };
+          state.pushBranch(match[1], true);
+          state.appendStringToCurrentBranch(match[2]);
           break;
         case 'endif':
           if (!stateStack.length) {
-            throw new Error('#endif not preceeded by an #if');
-            break;
+            throw new Error(`#${match[1]} not preceeded by an #if`);
           }
-          const branchState = stateStack.length == depth ? stateStack.pop() : state;
+
+          const result = state.resolve();
+
           state = stateStack.pop();
-          depth--;
-          if (branchState.expression) {
-            state.string += branchState.string;
-          }
-          state.string += match[2];
+          state.appendStringToCurrentBranch(result, match[2]);
           break;
         default:
           // Unknown preprocessor symbol. Emit it back into the output string unchanged.
-          state.string += match[0];
+          state.appendStringToCurrentBranch(match[0]);
           break;
       }
 
@@ -76,12 +100,12 @@ export function wgsl(strings, ...values) {
 
     // If the string didn't end on one of the preprocessor symbols append the rest of it here.
     if (lastIndex != string.length) {
-      state.string += string.substring(lastIndex, string.length);
+      state.appendStringToCurrentBranch(string.substring(lastIndex, string.length));
     }
 
     // If the next value wasn't consumed by the preprocessor symbol, append it here.
     if (!valueConsumed && values.length > i) {
-      state.string += values[i];
+      state.appendStringToCurrentBranch(values[i]);
     }
   }
 
@@ -89,5 +113,5 @@ export function wgsl(strings, ...values) {
     throw new Error('Mismatched #if/#endif count');
   }
 
-  return state.string;
+  return state.resolve();
 }
